@@ -1,132 +1,70 @@
-# Sistema de Telemetria OBD2 (ESP32 + BLE)
+# Firmware de Telemetria Veicular
 
-Este projeto implementa um **firmware de telemetria veicular** utilizando **ESP32**, comunicação **OBD2 via CAN** e **Bluetooth Low Energy (BLE)** para interação com uma aplicação móvel.
+Firmware embarcado para ESP32-WROOM-32D, desenvolvido com PlatformIO, ESP-IDF e FreeRTOS, destinado à aquisição segura de dados OBD-II e à transmissão de telemetria por BLE para um aplicativo móvel.
 
-A arquitetura segue princípios de **Clean Architecture**, **separação de responsabilidades**, **baixo acoplamento** e **alto desempenho**, considerando as limitações de memória e processamento de sistemas embarcados.
+## Visão geral
 
----
+O dispositivo atua como uma ponte somente leitura entre o veículo e o aplicativo. Ele consulta sinais de diagnóstico autorizados, converte os dados para um modelo semântico de telemetria e os disponibiliza por uma comunicação BLE autenticada.
 
-## Objetivos do Projeto
+A solução foi projetada para separar o acesso ao veículo, o agendamento de sinais, o controle da sessão, o protocolo binário e o transporte BLE. Essa separação permite evoluir o hardware de diagnóstico sem acoplar os detalhes do veículo ao aplicativo.
 
-- Ler dados OBD2 (PIDs) via CAN Bus
-- Processar e interpretar dados no firmware
-- Expor dados via protocolo customizado sobre BLE
-- Manter sistema robusto com watchdog, timeout e máquina de estados
-- Facilitar manutenção e evolução do código
+## Características do projeto
 
----
+- ESP32-WROOM-32D-N4 em DevKit;
+- MCP2515 com transceptor TJA1050;
+- CAN com identificadores padrão de 11 bits e taxa nominal de 500 kbit/s;
+- ISO 15765-4 sobre CAN e OBD-II Mode 01;
+- aquisição multi-PID, com RPM e velocidade como sinais iniciais;
+- BLE/GATT para comunicação com o aplicativo;
+- protocolo de aplicação binário com CRC-16/CCITT-FALSE;
+- bonding BLE com passkey por dispositivo;
+- comunicação veicular exclusivamente somente leitura.
 
-## Arquitetura Geral
+O hardware de protótipo utiliza alimentação de 5 V para o módulo MCP2515/TJA1050, conversão de nível entre o módulo e o ESP32 e um LM2596 precedido por proteção elétrica. A terminação de 120 ohms do módulo deve permanecer desabilitada quando o dispositivo não for um terminador necessário do barramento.
 
-O firmware é dividido em módulos bem definidos:
-
-- **Protocol**: comunicação APP ↔ ESP (parser/encoder)
-- **Control**: máquina de estados, fluxo principal e timeouts
-- **OBD**: comunicação CAN e interpretação de PIDs
-- **BLE**: servidor BLE e callbacks
-- **Device**: abstrações de hardware (LED, erros)
-- **Utils**: utilitários genéricos (timer, buffers)
-
-Não há dependência circular entre módulos críticos.
-
----
-
-## Estrutura de Pastas
+## Arquitetura
 
 ```text
-src/
-├── main.cpp
-│
-├── protocol/
-│   ├── ProtocolParser.h / .cpp
-│   ├── ProtocolEncoder.h / .cpp
-│   └── ProtocolTypes.h
-│
-├── control/
-│   ├── StateMachine.h / .cpp
-│   ├── DeviceState.h
-│   ├── LoopController.h / .cpp
-│   ├── TimeoutManager.h / .cpp
-│
-├── obd/
-│   ├── CanDriver.h / .cpp
-│   ├── PidRegistry.h / .cpp
-│   ├── IPidInterpreter.h
-│   ├── SpeedInterpreter.cpp
-│   ├── RpmInterpreter.cpp
-│
-├── device/
-│   ├── LedController.h / .cpp
-│   ├── ErrorCodes.h
-│   └── ErrorMapper.cpp
-│
-├── ble/
-│   ├── BleServer.h / .cpp
-│   └── BleCallbacks.cpp
-│
-└── utils/
-    ├── Timer.h
-    └── RingBuffer.h
+Aplicativo BLE
+    ↓
+BLE/GATT e protocolo binário
+    ↓
+ControlTask / SessionManager
+    ↓
+TelemetryScheduler
+    ↓
+VehicleAccess
+    ↓
+ObdCanAdapter → MCP2515 → CAN/OBD
 ```
 
----
+O contrato `VehicleAccess` mantém o domínio orientado a sinais semânticos, permitindo adicionar futuramente um `ObdKLineAdapter` externo para veículos cujo diagnóstico utilize K-Line. A aplicação e o protocolo não dependem de registradores do MCP2515, frames CAN crus ou detalhes de temporização do veículo.
 
-## Fluxo de Comunicação (Resumo)
+## Documentação técnica
 
-```text
-APP  → START
-ESP  → OK-START
+- [MVP e requisitos](docs/mvp-telemetria.md)
+- [Arquitetura e fluxo BLE](docs/arquitetura-fluxo-ble.md)
+- [Protocolo BLE binário](docs/protocolo-ble-telemetria.md)
+- [Análise de arquitetura e roadmap](docs/ia/analise-codigo-arquitetura-roadmap.md)
 
-APP  → SET-<PID>
-ESP  → OK-SET
+Os documentos de análise, decisões de engenharia e roadmap são mantidos em `docs/ia/` como material interno de trabalho.
 
-ESP  → DATA-<PID>:<valor> (stream)
+## Desenvolvimento local
 
-APP  → STOP
-ESP  → OK-STOP
+### Build no Windows
+
+O ESP-IDF rejeita caminhos de projeto que contenham espaços. Como o repositório está dentro de uma pasta do Google Drive com espaços, use o wrapper versionado:
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\tools\platformio.ps1 run
 ```
 
----
+O wrapper cria temporariamente uma unidade virtual livre, executa o PlatformIO e remove somente o mapeamento criado por ele. Não execute `pio run` diretamente pelo caminho físico original.
 
-## Concorrência e Threads (ESP32)
+### Testes host
 
-- **Core 0**
-  - BLE Stack
-  - Callbacks BLE
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\tools\run-host-tests.ps1
+```
 
-- **Core 1**
-  - Loop principal
-  - Máquina de estados
-  - Leitura CAN / OBD
-
-Comunicação entre tarefas feita via **RingBuffer / Queue**.
-Sem lógica pesada dentro de callbacks.
-
----
-
-## Boas Práticas Aplicadas
-
-- Nenhuma lógica de negócio dentro de callbacks BLE
-- Máquina de estados explícita (sem ifs espalhados)
-- PIDs interpretados via Strategy Pattern
-- Baixo uso de heap
-- Watchdog e timeouts isolados
-- Código testável e previsível
-
----
-
-## Requisitos
-
-- ESP32
-- Interface CAN (ex: MCP2515)
-- VSCode + PlatformIO ou Arduino Framework
-- Aplicativo BLE compatível
-
----
-
-## Próximos Passos
-
-- Persistência de configuração
-- Suporte a múltiplos PIDs simultâneos
-- Filtro de taxa de envio
-- Logs condicionais
+Os testes de host não dependem de ESP-IDF, BLE ou CAN.
