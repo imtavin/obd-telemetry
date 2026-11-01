@@ -1,10 +1,12 @@
 # Build
+.pio/
 build/
 out/
 
 # ESP-IDF
 .sdkconfig
 .sdkconfig.old
+sdkconfig.esp32dev
 
 # VSCode
 .vscode/
@@ -25,3 +27,6 @@ Thumbs.db
 
 # Temporary
 *.tmp
+
+# AI-generated working documents
+docs/ia/
